@@ -1,0 +1,219 @@
+use std::env;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result};
+use serde::Deserialize;
+
+use crate::cli::{CliOverrides, CopyMode, EnvMode};
+
+#[derive(Debug, Clone)]
+pub struct ResolvedConfig {
+    pub host: String,
+    pub remote_dir: String,
+    pub env: EnvMode,
+    pub target_cpu: String,
+    pub copy: Option<CopyMode>,
+    pub remote_run: bool,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct PartialConfig {
+    host: Option<String>,
+    remote_dir: Option<String>,
+    env: Option<String>,
+    target_cpu: Option<String>,
+    copy: Option<String>,
+    remote_run: Option<bool>,
+}
+
+impl PartialConfig {
+    fn from_file(path: &Path) -> Result<Option<Self>> {
+        if !path.is_file() {
+            return Ok(None);
+        }
+        let raw = fs::read_to_string(path)
+            .with_context(|| format!("reading config file {}", path.display()))?;
+        let parsed: Self = toml::from_str(&raw)
+            .with_context(|| format!("parsing TOML in {}", path.display()))?;
+        Ok(Some(parsed))
+    }
+
+    fn apply_into(&self, dst: &mut ConfigBuilder) -> Result<()> {
+        if let Some(v) = &self.host {
+            dst.host = Some(v.clone());
+        }
+        if let Some(v) = &self.remote_dir {
+            dst.remote_dir = v.clone();
+        }
+        if let Some(v) = &self.env {
+            dst.env = EnvMode::parse(v)?;
+        }
+        if let Some(v) = &self.target_cpu {
+            dst.target_cpu = v.clone();
+        }
+        if let Some(v) = &self.copy {
+            dst.copy = Some(CopyMode::parse(v)?);
+        }
+        if let Some(v) = self.remote_run {
+            dst.remote_run = v;
+        }
+        Ok(())
+    }
+}
+
+struct ConfigBuilder {
+    host: Option<String>,
+    remote_dir: String,
+    env: EnvMode,
+    target_cpu: String,
+    copy: Option<CopyMode>,
+    remote_run: bool,
+}
+
+impl Default for ConfigBuilder {
+    fn default() -> Self {
+        Self {
+            host: None,
+            remote_dir: "~/remote-builds".to_string(),
+            env: EnvMode::None,
+            target_cpu: "auto".to_string(),
+            copy: None,
+            remote_run: false,
+        }
+    }
+}
+
+pub fn global_config_path() -> Option<PathBuf> {
+    if let Ok(xdg) = env::var("XDG_CONFIG_HOME") {
+        if !xdg.is_empty() {
+            return Some(PathBuf::from(xdg).join("cargo-anywhere/config.toml"));
+        }
+    }
+    env::var("HOME")
+        .ok()
+        .map(|h| PathBuf::from(h).join(".config/cargo-anywhere/config.toml"))
+}
+
+pub fn load_config(workspace_root: Option<&Path>, cli: &CliOverrides) -> Result<ResolvedConfig> {
+    let mut cfg = ConfigBuilder::default();
+
+    // 1. Global config
+    if let Some(global_path) = global_config_path() {
+        if let Some(partial) = PartialConfig::from_file(&global_path)? {
+            partial.apply_into(&mut cfg)?;
+        }
+    }
+
+    // 2. Workspace config (.cargo-anywhere.toml -> .cargo-anywhere.local.toml)
+    if let Some(root) = workspace_root {
+        for name in [".cargo-anywhere.toml", ".cargo-anywhere.local.toml"] {
+            if let Some(partial) = PartialConfig::from_file(&root.join(name))? {
+                partial.apply_into(&mut cfg)?;
+            }
+        }
+    }
+
+    // 3. Environment variables
+    if let Ok(v) = env::var("CARGO_ANYWHERE_HOST") {
+        if !v.is_empty() {
+            cfg.host = Some(v);
+        }
+    }
+    if let Ok(v) = env::var("CARGO_ANYWHERE_REMOTE_DIR") {
+        if !v.is_empty() {
+            cfg.remote_dir = v;
+        }
+    }
+    if let Ok(v) = env::var("CARGO_ANYWHERE_ENV") {
+        if !v.is_empty() {
+            cfg.env = EnvMode::parse(&v)?;
+        }
+    }
+    if let Ok(v) = env::var("CARGO_ANYWHERE_TARGET_CPU") {
+        if !v.is_empty() {
+            cfg.target_cpu = v;
+        }
+    }
+    if let Ok(v) = env::var("CARGO_ANYWHERE_COPY") {
+        if !v.is_empty() {
+            cfg.copy = Some(CopyMode::parse(&v)?);
+        }
+    }
+    if let Ok(v) = env::var("CARGO_ANYWHERE_REMOTE_RUN") {
+        if matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes") {
+            cfg.remote_run = true;
+        } else if matches!(v.to_ascii_lowercase().as_str(), "0" | "false" | "no") {
+            cfg.remote_run = false;
+        }
+    }
+
+    // 4. CLI flags (highest priority)
+    if let Some(v) = &cli.host {
+        cfg.host = Some(v.clone());
+    }
+    if let Some(v) = &cli.remote_dir {
+        cfg.remote_dir = v.clone();
+    }
+    if let Some(v) = cli.env {
+        cfg.env = v;
+    }
+    if let Some(v) = &cli.target_cpu {
+        cfg.target_cpu = v.clone();
+    }
+    if let Some(v) = cli.copy {
+        cfg.copy = Some(v);
+    }
+    if let Some(v) = cli.remote_run {
+        cfg.remote_run = v;
+    }
+
+    let host = cfg.host.ok_or_else(|| {
+        anyhow::anyhow!(
+            "no remote host configured; pass --host <HOST>, set CARGO_ANYWHERE_HOST, or set `host = \"...\"` in ~/.config/cargo-anywhere/config.toml"
+        )
+    })?;
+
+    Ok(ResolvedConfig {
+        host,
+        remote_dir: cfg.remote_dir,
+        env: cfg.env,
+        target_cpu: cfg.target_cpu,
+        copy: cfg.copy,
+        remote_run: cfg.remote_run,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn precedence_workspace_local_overrides_workspace() {
+        let dir = env::temp_dir().join(format!("cargo-anywhere-cfg-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        fs::write(
+            dir.join(".cargo-anywhere.toml"),
+            "host = \"server-a\"\nremote_dir = \"~/builds-a\"\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join(".cargo-anywhere.local.toml"),
+            "host = \"server-b\"\ntarget_cpu = \"znver4\"\n",
+        )
+        .unwrap();
+
+        let cli = CliOverrides {
+            remote_dir: Some("/tmp/cli".into()),
+            ..Default::default()
+        };
+        let resolved = load_config(Some(&dir), &cli).unwrap();
+        assert_eq!(resolved.host, "server-b");
+        assert_eq!(resolved.remote_dir, "/tmp/cli");
+        assert_eq!(resolved.target_cpu, "znver4");
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+}

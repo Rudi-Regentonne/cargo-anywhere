@@ -1,0 +1,167 @@
+mod cli;
+mod config;
+mod cpu;
+mod remote;
+mod sync;
+mod workspace;
+
+use std::env;
+use std::path::Path;
+use std::process::{Command, ExitCode};
+
+use anyhow::{Context, Result};
+
+use cli::{Action, CopyMode};
+
+fn main() -> ExitCode {
+    match run() {
+        Ok(code) => ExitCode::from(code as u8),
+        Err(err) => {
+            eprintln!("cargo-anywhere error: {err:#}");
+            ExitCode::from(1)
+        }
+    }
+}
+
+fn run() -> Result<i32> {
+    let parsed = cli::parse_args(env::args().skip(1))?;
+
+    match parsed.action {
+        Action::Help => {
+            cli::print_help();
+            Ok(0)
+        }
+        Action::Version => {
+            println!("cargo-anywhere {}", env!("CARGO_PKG_VERSION"));
+            Ok(0)
+        }
+        Action::Gc => {
+            let cwd = env::current_dir()?;
+            let ws_root = workspace::discover_layout(&cwd)
+                .ok()
+                .map(|l| l.workspace_root);
+            let cfg = config::load_config(ws_root.as_deref(), &parsed.overrides)?;
+            sync::check_reachable(&cfg.host)?;
+            remote::gc_remote(&cfg.host, &cfg.remote_dir)?;
+            Ok(0)
+        }
+        Action::Cargo {
+            subcommand,
+            cargo_args,
+            app_args,
+        } => {
+            let cwd = env::current_dir()?;
+            let layout = workspace::discover_layout(&cwd)?;
+            let cfg = config::load_config(Some(&layout.workspace_root), &parsed.overrides)?;
+
+            let remote_sync_dir = format!("{}/{}", cfg.remote_dir.trim_end_matches('/'), layout.project_hash);
+            let remote_work_dir = join_remote(&remote_sync_dir, &layout.rel_cwd);
+            let remote_ws_dir = join_remote(&remote_sync_dir, &layout.rel_workspace);
+
+            let has_cargo_target = cargo_args
+                .iter()
+                .any(|a| a == "--target" || a.starts_with("--target="));
+            let target_cpu = if has_cargo_target && cfg.target_cpu.eq_ignore_ascii_case("auto") {
+                None
+            } else {
+                cpu::resolve_target_cpu(&cfg.target_cpu)
+            };
+            sync::check_reachable(&cfg.host)?;
+            sync::upload_sources(&cfg.host, &remote_sync_dir, &layout.sync_root)?;
+
+            // Determine copy-back behavior
+            let is_local_run = subcommand == "run" && !cfg.remote_run;
+            let copy_mode = cfg.copy.unwrap_or(if is_local_run {
+                CopyMode::Bin
+            } else {
+                CopyMode::None
+            });
+
+            if is_local_run || copy_mode == CopyMode::Bin {
+                let mut build_cmd = vec![if is_local_run {
+                    "build".to_string()
+                } else {
+                    subcommand.clone()
+                }];
+                build_cmd.extend(cargo_args.iter().cloned());
+                if !build_cmd
+                    .iter()
+                    .any(|a| a.starts_with("--message-format"))
+                {
+                    build_cmd.push("--message-format=json-render-diagnostics".to_string());
+                }
+
+                let script = remote::build_remote_script(
+                    &remote_work_dir,
+                    &remote_ws_dir,
+                    &remote_sync_dir,
+                    cfg.env,
+                    target_cpu.as_deref(),
+                    &build_cmd,
+                );
+                let out = remote::run_capturing_executables(&cfg.host, &script)?;
+                if !out.success {
+                    return Ok(out.exit_code);
+                }
+
+                // Sync Cargo.lock back if it exists remotely (best-effort)
+                let _ = sync::download_file(
+                    &cfg.host,
+                    &format!("{remote_ws_dir}/Cargo.lock"),
+                    &layout.workspace_root.join("Cargo.lock"),
+                );
+
+                let mut local_bins = Vec::new();
+                for remote_exe in &out.executables {
+                    if let Some(rel_after_target) = remote_exe.split("/target/").nth(1) {
+                        let local_exe = layout.workspace_root.join("target").join(rel_after_target);
+                        sync::download_file(&cfg.host, remote_exe, &local_exe)?;
+                        local_bins.push(local_exe);
+                    }
+                }
+
+                if is_local_run {
+                    let bin = local_bins.last().ok_or_else(|| {
+                        anyhow::anyhow!("no executable produced by remote build; pass --bin <name> if the package has multiple binaries")
+                    })?;
+                    let status = Command::new(bin)
+                        .args(&app_args)
+                        .status()
+                        .with_context(|| format!("executing {}", bin.display()))?;
+                    return Ok(status.code().unwrap_or(1));
+                }
+
+                Ok(0)
+            } else {
+                let mut full_cmd = vec![subcommand];
+                full_cmd.extend(cargo_args);
+                if !app_args.is_empty() {
+                    full_cmd.push("--".to_string());
+                    full_cmd.extend(app_args);
+                }
+
+                let script = remote::build_remote_script(
+                    &remote_work_dir,
+                    &remote_ws_dir,
+                    &remote_sync_dir,
+                    cfg.env,
+                    target_cpu.as_deref(),
+                    &full_cmd,
+                );
+                let code = remote::run_streaming(&cfg.host, &script)?;
+                if code == 0 && copy_mode == CopyMode::Target {
+                    sync::download_target_dir(&cfg.host, &remote_ws_dir, &layout.workspace_root)?;
+                }
+                Ok(code)
+            }
+        }
+    }
+}
+
+fn join_remote(base: &str, rel: &Path) -> String {
+    if rel.as_os_str().is_empty() {
+        base.to_string()
+    } else {
+        format!("{}/{}", base.trim_end_matches('/'), rel.to_string_lossy())
+    }
+}
