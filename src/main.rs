@@ -41,8 +41,8 @@ fn run() -> Result<i32> {
                 .ok()
                 .map(|l| l.workspace_root);
             let cfg = config::load_config(ws_root.as_deref(), &parsed.overrides)?;
-            sync::check_reachable(&cfg.host)?;
-            remote::gc_remote(&cfg.host, &cfg.remote_dir)?;
+            sync::check_reachable(&cfg)?;
+            remote::gc_remote(&cfg)?;
             Ok(0)
         }
         Action::Cargo {
@@ -66,8 +66,8 @@ fn run() -> Result<i32> {
             } else {
                 cpu::resolve_target_cpu(&cfg.target_cpu)
             };
-            sync::check_reachable(&cfg.host)?;
-            sync::upload_sources(&cfg.host, &remote_sync_dir, &layout.sync_root)?;
+            sync::check_reachable(&cfg)?;
+            sync::upload_sources(&cfg, &remote_sync_dir, &layout.sync_root)?;
 
             // Determine copy-back behavior
             let is_local_run = subcommand == "run" && !cfg.remote_run;
@@ -99,14 +99,14 @@ fn run() -> Result<i32> {
                     target_cpu.as_deref(),
                     &build_cmd,
                 );
-                let out = remote::run_capturing_executables(&cfg.host, &script)?;
+                let out = remote::run_capturing_executables(&cfg, &script)?;
                 if !out.success {
                     return Ok(out.exit_code);
                 }
 
                 // Sync Cargo.lock back if it exists remotely (best-effort)
                 let _ = sync::download_file(
-                    &cfg.host,
+                    &cfg,
                     &format!("{remote_ws_dir}/Cargo.lock"),
                     &layout.workspace_root.join("Cargo.lock"),
                 );
@@ -115,7 +115,7 @@ fn run() -> Result<i32> {
                 for remote_exe in &out.executables {
                     if let Some(rel_after_target) = remote_exe.split("/target/").nth(1) {
                         let local_exe = layout.workspace_root.join("target").join(rel_after_target);
-                        sync::download_file(&cfg.host, remote_exe, &local_exe)?;
+                        sync::download_file(&cfg, remote_exe, &local_exe)?;
                         local_bins.push(local_exe);
                     }
                 }
@@ -148,9 +148,9 @@ fn run() -> Result<i32> {
                     target_cpu.as_deref(),
                     &full_cmd,
                 );
-                let code = remote::run_streaming(&cfg.host, &script)?;
+                let code = remote::run_streaming(&cfg, &script)?;
                 if code == 0 && copy_mode == CopyMode::Target {
-                    sync::download_target_dir(&cfg.host, &remote_ws_dir, &layout.workspace_root)?;
+                    sync::download_target_dir(&cfg, &remote_ws_dir, &layout.workspace_root)?;
                 }
                 Ok(code)
             }

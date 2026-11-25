@@ -3,40 +3,50 @@ use std::process::Command;
 
 use anyhow::{bail, Context, Result};
 
-pub fn check_reachable(host: &str) -> Result<()> {
-    let out = Command::new("ssh")
-        .args([
-            "-o",
-            "ConnectTimeout=3",
-            "-o",
-            "BatchMode=yes",
-            host,
-            "true",
-        ])
+use crate::config::ResolvedConfig;
+
+pub fn check_reachable(cfg: &ResolvedConfig) -> Result<()> {
+    let target = cfg.ssh_target();
+    let mut cmd = Command::new("ssh");
+    cmd.args(["-o", "ConnectTimeout=3", "-o", "BatchMode=yes"]);
+    cmd.args(cfg.ssh_identity_args());
+    let out = cmd
+        .args([&target, "true"])
         .output()
         .context("running ssh connectivity check")?;
 
     if !out.status.success() {
         let stderr = String::from_utf8_lossy(&out.stderr);
         let reason = stderr.lines().last().unwrap_or("connection failed").trim();
-        bail!("remote host '{host}' is unreachable ({reason})");
+        bail!("remote host '{target}' is unreachable ({reason})");
     }
     Ok(())
 }
 
-pub fn upload_sources(host: &str, remote_sync_dir: &str, local_sync_root: &Path) -> Result<()> {
-    let status = Command::new("ssh")
-        .args([host, &format!("mkdir -p {remote_sync_dir}")])
+pub fn upload_sources(
+    cfg: &ResolvedConfig,
+    remote_sync_dir: &str,
+    local_sync_root: &Path,
+) -> Result<()> {
+    let target = cfg.ssh_target();
+    let mut ssh_cmd = Command::new("ssh");
+    ssh_cmd.args(cfg.ssh_identity_args());
+    let status = ssh_cmd
+        .args([&target, &format!("mkdir -p {remote_sync_dir}")])
         .status()
         .context("running ssh mkdir")?;
     if !status.success() {
-        bail!("failed to create remote directory on {host}");
+        bail!("failed to create remote directory on {target}");
     }
 
     let src = format!("{}/", local_sync_root.display());
-    let dst = format!("{host}:{remote_sync_dir}/");
+    let dst = format!("{target}:{remote_sync_dir}/");
 
-    let status = Command::new("rsync")
+    let mut rsync_cmd = Command::new("rsync");
+    if let Some(rsh) = cfg.rsync_rsh() {
+        rsync_cmd.args(["-e", &rsh]);
+    }
+    let status = rsync_cmd
         .args([
             "-az",
             "--delete",
@@ -50,18 +60,23 @@ pub fn upload_sources(host: &str, remote_sync_dir: &str, local_sync_root: &Path)
         .context("running rsync upload")?;
 
     if !status.success() {
-        bail!("rsync upload to {host} failed");
+        bail!("rsync upload to {target} failed");
     }
     Ok(())
 }
 
-pub fn download_file(host: &str, remote_path: &str, local_path: &Path) -> Result<()> {
+pub fn download_file(cfg: &ResolvedConfig, remote_path: &str, local_path: &Path) -> Result<()> {
     if let Some(parent) = local_path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("creating directory {}", parent.display()))?;
     }
-    let src = format!("{host}:{remote_path}");
-    let status = Command::new("rsync")
+    let target = cfg.ssh_target();
+    let src = format!("{target}:{remote_path}");
+    let mut rsync_cmd = Command::new("rsync");
+    if let Some(rsh) = cfg.rsync_rsh() {
+        rsync_cmd.args(["-e", &rsh]);
+    }
+    let status = rsync_cmd
         .args(["-az", &src, &local_path.to_string_lossy()])
         .status()
         .with_context(|| format!("downloading {src}"))?;
@@ -72,20 +87,25 @@ pub fn download_file(host: &str, remote_path: &str, local_path: &Path) -> Result
 }
 
 pub fn download_target_dir(
-    host: &str,
+    cfg: &ResolvedConfig,
     remote_workspace_dir: &str,
     local_workspace_dir: &Path,
 ) -> Result<()> {
-    let src = format!("{host}:{remote_workspace_dir}/target/");
+    let target = cfg.ssh_target();
+    let src = format!("{target}:{remote_workspace_dir}/target/");
     let dst = format!("{}/target/", local_workspace_dir.display());
     std::fs::create_dir_all(local_workspace_dir.join("target"))?;
 
-    let status = Command::new("rsync")
+    let mut rsync_cmd = Command::new("rsync");
+    if let Some(rsh) = cfg.rsync_rsh() {
+        rsync_cmd.args(["-e", &rsh]);
+    }
+    let status = rsync_cmd
         .args(["-az", "--delete", &src, &dst])
         .status()
         .context("running rsync target download")?;
     if !status.success() {
-        bail!("rsync target download from {host} failed");
+        bail!("rsync target download from {target} failed");
     }
     Ok(())
 }

@@ -41,6 +41,8 @@ impl CopyMode {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CliOverrides {
     pub host: Option<String>,
+    pub user: Option<String>,
+    pub identity_file: Option<String>,
     pub remote_dir: Option<String>,
     pub env: Option<EnvMode>,
     pub target_cpu: Option<String>,
@@ -80,6 +82,8 @@ USAGE:
 
 OPTIONS:
     --host <HOST>            Remote SSH host (or SSH config alias)
+    --user <USER>            SSH username (overrides SSH config / host user)
+    --identity-file <PATH>   SSH private key file (adds -i <PATH> -o IdentitiesOnly=yes)
     --remote-dir <DIR>       Remote base directory (default: ~/remote-builds)
     --env <MODE>             Remote env wrapper: none | devenv | nix | auto (default: none)
     --target-cpu <CPU>       Target CPU for RUSTFLAGS: auto | <cpu> | none (default: auto)
@@ -142,6 +146,14 @@ where
 
         if let Some(val) = take_opt_value(&raw, &mut i, "--host")? {
             overrides.host = Some(val);
+            continue;
+        }
+        if let Some(val) = take_opt_value(&raw, &mut i, "--user")? {
+            overrides.user = Some(val);
+            continue;
+        }
+        if let Some(val) = take_opt_value(&raw, &mut i, "--identity-file")? {
+            overrides.identity_file = Some(val);
             continue;
         }
         if let Some(val) = take_opt_value(&raw, &mut i, "--remote-dir")? {

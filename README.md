@@ -8,6 +8,7 @@ Offload Cargo builds to a fast remote machine over SSH and `rsync`, with automat
 - **Automatic client CPU optimization**: Detects your local CPU (e.g., `znver4`) and passes `-C target-cpu=<cpu>` via `RUSTFLAGS` to the remote build host (automatically skipped when `--target` is passed).
 - **Smart `run` & binary-only copy-back**: `cargo anywhere run` builds remotely, copies back **only** the compiled executable + `Cargo.lock` (never gigabytes of `target/`), and executes locally with your `-- <app_args>`.
 - **Opt-in Nix / `devenv` support**: Plain `cargo` by default for standard `rustup` users; set `env = "auto" | "devenv" | "nix"` to wrap remote commands in `devenv shell --` or `nix develop -c`.
+- **Isolated build user & SSH key**: Optional `user` and `identity_file` (`--user`, `--identity-file`) to separate build connections from your normal SSH user/key.
 - **Remote cache cleanup**: `cargo anywhere gc` prunes remote build directories.
 
 ## Requirements
@@ -53,6 +54,9 @@ cargo anywhere --local-run run
 # Copy back full target/ directory instead of just binaries
 cargo anywhere --copy-target build
 
+# Use a separate build user and SSH key
+cargo anywhere --user builder --identity-file ~/.ssh/id_builder build
+
 # Clean remote build cache
 cargo anywhere gc
 ```
@@ -61,8 +65,8 @@ cargo anywhere gc
 
 Precedence (highest to lowest):
 
-1. **CLI flags**: `--host`, `--remote-dir`, `--env`, `--target-cpu`, `--no-target-cpu`, `--copy-bin`, `--copy-target`, `--no-copy`, `--remote-run`, `--local-run`
-2. **Environment variables**: `CARGO_ANYWHERE_HOST`, `CARGO_ANYWHERE_REMOTE_DIR`, `CARGO_ANYWHERE_ENV`, `CARGO_ANYWHERE_TARGET_CPU`, `CARGO_ANYWHERE_COPY`, `CARGO_ANYWHERE_REMOTE_RUN`
+1. **CLI flags**: `--host`, `--user`, `--identity-file`, `--remote-dir`, `--env`, `--target-cpu`, `--no-target-cpu`, `--copy-bin`, `--copy-target`, `--no-copy`, `--remote-run`, `--local-run`
+2. **Environment variables**: `CARGO_ANYWHERE_HOST`, `CARGO_ANYWHERE_USER`, `CARGO_ANYWHERE_IDENTITY_FILE`, `CARGO_ANYWHERE_REMOTE_DIR`, `CARGO_ANYWHERE_ENV`, `CARGO_ANYWHERE_TARGET_CPU`, `CARGO_ANYWHERE_COPY`, `CARGO_ANYWHERE_REMOTE_RUN`
 3. **Workspace local override**: `<workspace>/.cargo-anywhere.local.toml`
 4. **Workspace config**: `<workspace>/.cargo-anywhere.toml`
 5. **Global config**: `~/.config/cargo-anywhere/config.toml`
@@ -71,6 +75,8 @@ Example `~/.config/cargo-anywhere/config.toml`:
 
 ```toml
 host = "heinz"
+# user = "builder"
+# identity_file = "~/.ssh/id_builder"
 remote_dir = "~/remote-builds"
 env = "auto"          # none (default) | devenv | nix | auto
 target_cpu = "auto"   # auto (default) | <cpu> | none

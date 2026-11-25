@@ -5,6 +5,7 @@ use anyhow::{bail, Context, Result};
 use serde_json::Value;
 
 use crate::cli::EnvMode;
+use crate::config::ResolvedConfig;
 
 #[derive(Debug, Default)]
 pub struct RemoteBuildOutput {
@@ -65,17 +66,24 @@ pub fn build_remote_script(
     parts.join(" && ")
 }
 
-pub fn run_streaming(host: &str, script: &str) -> Result<i32> {
-    let status = Command::new("ssh")
-        .args(["-t", host, script])
+pub fn run_streaming(cfg: &ResolvedConfig, script: &str) -> Result<i32> {
+    let target = cfg.ssh_target();
+    let mut cmd = Command::new("ssh");
+    cmd.arg("-t");
+    cmd.args(cfg.ssh_identity_args());
+    let status = cmd
+        .args([&target, script])
         .status()
         .context("executing remote ssh command")?;
     Ok(status.code().unwrap_or(1))
 }
 
-pub fn run_capturing_executables(host: &str, script: &str) -> Result<RemoteBuildOutput> {
-    let mut child = Command::new("ssh")
-        .args([host, script])
+pub fn run_capturing_executables(cfg: &ResolvedConfig, script: &str) -> Result<RemoteBuildOutput> {
+    let target = cfg.ssh_target();
+    let mut cmd = Command::new("ssh");
+    cmd.args(cfg.ssh_identity_args());
+    let mut child = cmd
+        .args([&target, script])
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()
@@ -119,14 +127,20 @@ pub fn run_capturing_executables(host: &str, script: &str) -> Result<RemoteBuild
     })
 }
 
-pub fn gc_remote(host: &str, remote_base_dir: &str) -> Result<()> {
-    let cmd = format!("rm -rf {remote_base_dir}/* && echo \"Cleaned {remote_base_dir}\"");
-    let status = Command::new("ssh")
-        .args([host, &cmd])
+pub fn gc_remote(cfg: &ResolvedConfig) -> Result<()> {
+    let target = cfg.ssh_target();
+    let cmd_str = format!(
+        "rm -rf {}/* && echo \"Cleaned {}\"",
+        cfg.remote_dir, cfg.remote_dir
+    );
+    let mut cmd = Command::new("ssh");
+    cmd.args(cfg.ssh_identity_args());
+    let status = cmd
+        .args([&target, &cmd_str])
         .status()
         .context("running remote gc")?;
     if !status.success() {
-        bail!("remote gc failed on {host}");
+        bail!("remote gc failed on {target}");
     }
     Ok(())
 }

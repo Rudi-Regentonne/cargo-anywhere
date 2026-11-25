@@ -10,6 +10,8 @@ use crate::cli::{CliOverrides, CopyMode, EnvMode};
 #[derive(Debug, Clone)]
 pub struct ResolvedConfig {
     pub host: String,
+    pub user: Option<String>,
+    pub identity_file: Option<String>,
     pub remote_dir: String,
     pub env: EnvMode,
     pub target_cpu: String,
@@ -17,9 +19,55 @@ pub struct ResolvedConfig {
     pub remote_run: bool,
 }
 
+impl ResolvedConfig {
+    pub fn ssh_target(&self) -> String {
+        match &self.user {
+            Some(u) if !self.host.contains('@') => format!("{u}@{}", self.host),
+            _ => self.host.clone(),
+        }
+    }
+
+    pub fn ssh_identity_args(&self) -> Vec<String> {
+        match &self.identity_file {
+            Some(key) => {
+                let expanded = expand_tilde(key);
+                vec![
+                    "-i".to_string(),
+                    expanded,
+                    "-o".to_string(),
+                    "IdentitiesOnly=yes".to_string(),
+                ]
+            }
+            None => Vec::new(),
+        }
+    }
+
+    pub fn rsync_rsh(&self) -> Option<String> {
+        let key = self.identity_file.as_ref()?;
+        let expanded = expand_tilde(key);
+        let quoted = if expanded.contains([' ', '\'', '"']) {
+            format!("'{}'", expanded.replace('\'', "'\\''"))
+        } else {
+            expanded
+        };
+        Some(format!("ssh -i {quoted} -o IdentitiesOnly=yes"))
+    }
+}
+
+fn expand_tilde(path: &str) -> String {
+    if let Some(rest) = path.strip_prefix("~/") {
+        if let Ok(home) = env::var("HOME") {
+            return format!("{home}/{rest}");
+        }
+    }
+    path.to_string()
+}
+
 #[derive(Debug, Clone, Default, Deserialize)]
 struct PartialConfig {
     host: Option<String>,
+    user: Option<String>,
+    identity_file: Option<String>,
     remote_dir: Option<String>,
     env: Option<String>,
     target_cpu: Option<String>,
@@ -43,6 +91,12 @@ impl PartialConfig {
         if let Some(v) = &self.host {
             dst.host = Some(v.clone());
         }
+        if let Some(v) = &self.user {
+            dst.user = Some(v.clone());
+        }
+        if let Some(v) = &self.identity_file {
+            dst.identity_file = Some(v.clone());
+        }
         if let Some(v) = &self.remote_dir {
             dst.remote_dir = v.clone();
         }
@@ -64,6 +118,8 @@ impl PartialConfig {
 
 struct ConfigBuilder {
     host: Option<String>,
+    user: Option<String>,
+    identity_file: Option<String>,
     remote_dir: String,
     env: EnvMode,
     target_cpu: String,
@@ -75,6 +131,8 @@ impl Default for ConfigBuilder {
     fn default() -> Self {
         Self {
             host: None,
+            user: None,
+            identity_file: None,
             remote_dir: "~/remote-builds".to_string(),
             env: EnvMode::None,
             target_cpu: "auto".to_string(),
@@ -120,6 +178,16 @@ pub fn load_config(workspace_root: Option<&Path>, cli: &CliOverrides) -> Result<
             cfg.host = Some(v);
         }
     }
+    if let Ok(v) = env::var("CARGO_ANYWHERE_USER") {
+        if !v.is_empty() {
+            cfg.user = Some(v);
+        }
+    }
+    if let Ok(v) = env::var("CARGO_ANYWHERE_IDENTITY_FILE") {
+        if !v.is_empty() {
+            cfg.identity_file = Some(v);
+        }
+    }
     if let Ok(v) = env::var("CARGO_ANYWHERE_REMOTE_DIR") {
         if !v.is_empty() {
             cfg.remote_dir = v;
@@ -152,6 +220,12 @@ pub fn load_config(workspace_root: Option<&Path>, cli: &CliOverrides) -> Result<
     if let Some(v) = &cli.host {
         cfg.host = Some(v.clone());
     }
+    if let Some(v) = &cli.user {
+        cfg.user = Some(v.clone());
+    }
+    if let Some(v) = &cli.identity_file {
+        cfg.identity_file = Some(v.clone());
+    }
     if let Some(v) = &cli.remote_dir {
         cfg.remote_dir = v.clone();
     }
@@ -176,6 +250,8 @@ pub fn load_config(workspace_root: Option<&Path>, cli: &CliOverrides) -> Result<
 
     Ok(ResolvedConfig {
         host,
+        user: cfg.user,
+        identity_file: cfg.identity_file,
         remote_dir: cfg.remote_dir,
         env: cfg.env,
         target_cpu: cfg.target_cpu,
