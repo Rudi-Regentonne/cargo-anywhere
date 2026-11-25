@@ -153,6 +153,8 @@ mod tests {
     fn quotes_special_args() {
         assert_eq!(shell_quote("--release"), "--release");
         assert_eq!(shell_quote("a b"), "'a b'");
+        assert_eq!(shell_quote(""), "''");
+        assert_eq!(shell_quote("it's"), "'it'\\''s'");
     }
 
     #[test]
@@ -165,8 +167,32 @@ mod tests {
             Some("znver4"),
             &["build".into(), "--release".into()],
         );
-        assert!(script.contains("RUSTFLAGS"));
-        assert!(script.contains("-C target-cpu=znver4"));
+        assert!(script.contains("RUSTFLAGS=\"-C target-cpu=znver4\""));
         assert!(script.contains("devenv shell -- cargo build --release"));
+    }
+
+    #[test]
+    fn builds_auto_and_none_scripts() {
+        let auto = build_remote_script(
+            "~/remote-builds/abc/app",
+            "~/remote-builds/abc/app",
+            "~/remote-builds/abc",
+            EnvMode::Auto,
+            None,
+            &["check".into()],
+        );
+        assert!(!auto.contains("RUSTFLAGS"));
+        assert!(auto.contains("devenv.nix"));
+        assert!(auto.contains("flake.nix"));
+
+        let plain = build_remote_script(
+            "~/remote-builds/abc",
+            "~/remote-builds/abc",
+            "~/remote-builds/abc",
+            EnvMode::None,
+            None,
+            &["test".into()],
+        );
+        assert!(plain.ends_with("cargo test"));
     }
 }

@@ -101,6 +101,13 @@ mod tests {
     fn none_disables_target_cpu() {
         assert_eq!(resolve_target_cpu("none"), None);
         assert_eq!(resolve_target_cpu("OFF"), None);
-        assert_eq!(resolve_target_cpu("znver4").as_deref(), Some("znver4"));
+        assert_eq!(resolve_target_cpu(" znver4 ").as_deref(), Some("znver4"));
+    }
+
+    #[test]
+    fn ignores_generic_gcc_march() {
+        assert_eq!(parse_gcc_march("  -march= x86-64\n"), None);
+        assert_eq!(parse_gcc_march("  -march= generic\n"), None);
+        assert_eq!(parse_gcc_march("  -march= native\n"), None);
     }
 }

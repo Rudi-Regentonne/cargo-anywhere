@@ -120,4 +120,17 @@ mod tests {
             Some(PathBuf::from("/home/qajus/code/hellyeah"))
         );
     }
+
+    #[test]
+    fn common_ancestor_handles_single_and_nested_paths() {
+        let single = vec![PathBuf::from("/home/qajus/code/app")];
+        assert_eq!(common_ancestor(&single), Some(PathBuf::from("/home/qajus/code/app")));
+
+        let nested = vec![
+            PathBuf::from("/a/b/c/d"),
+            PathBuf::from("/a/b/e"),
+            PathBuf::from("/a/b/c/f"),
+        ];
+        assert_eq!(common_ancestor(&nested), Some(PathBuf::from("/a/b")));
+    }
 }

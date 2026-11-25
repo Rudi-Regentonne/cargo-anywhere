@@ -296,4 +296,44 @@ mod tests {
         assert_eq!(parsed.overrides.remote_dir.as_deref(), Some("/tmp/builds"));
         assert_eq!(parsed.action, Action::Gc);
     }
+
+    #[test]
+    fn parses_user_identity_and_copy_flags() {
+        let parsed = parse_args(s(&[
+            "--user",
+            "builder",
+            "--identity-file",
+            "~/.ssh/id_builder",
+            "--env",
+            "devenv",
+            "--no-target-cpu",
+            "--copy-target",
+            "--local-run",
+            "run",
+        ]))
+        .unwrap();
+
+        assert_eq!(parsed.overrides.user.as_deref(), Some("builder"));
+        assert_eq!(
+            parsed.overrides.identity_file.as_deref(),
+            Some("~/.ssh/id_builder")
+        );
+        assert_eq!(parsed.overrides.env, Some(EnvMode::Devenv));
+        assert_eq!(parsed.overrides.target_cpu.as_deref(), Some("none"));
+        assert_eq!(parsed.overrides.copy, Some(CopyMode::Target));
+        assert_eq!(parsed.overrides.remote_run, Some(false));
+    }
+
+    #[test]
+    fn parses_clean_alias_and_version() {
+        assert_eq!(parse_args(s(&["clean"])).unwrap().action, Action::Gc);
+        assert_eq!(parse_args(s(&["-V"])).unwrap().action, Action::Version);
+        assert_eq!(parse_args(s(&[])).unwrap().action, Action::Help);
+    }
+
+    #[test]
+    fn errors_on_missing_flag_value() {
+        assert!(parse_args(s(&["--host"])).is_err());
+        assert!(parse_args(s(&["--env", "invalid"])).is_err());
+    }
 }

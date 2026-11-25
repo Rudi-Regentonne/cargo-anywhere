@@ -292,4 +292,43 @@ mod tests {
 
         let _ = fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    fn ssh_target_and_identity_formatting() {
+        let cfg = ResolvedConfig {
+            host: "heinz".into(),
+            user: Some("builder".into()),
+            identity_file: Some("/tmp/my key".into()),
+            remote_dir: "~/remote-builds".into(),
+            env: EnvMode::None,
+            target_cpu: "auto".into(),
+            copy: None,
+            remote_run: false,
+        };
+        assert_eq!(cfg.ssh_target(), "builder@heinz");
+        assert_eq!(
+            cfg.ssh_identity_args(),
+            vec!["-i", "/tmp/my key", "-o", "IdentitiesOnly=yes"]
+        );
+        assert_eq!(
+            cfg.rsync_rsh().as_deref(),
+            Some("ssh -i '/tmp/my key' -o IdentitiesOnly=yes")
+        );
+
+        let with_at = ResolvedConfig {
+            host: "qajus@heinz".into(),
+            ..cfg
+        };
+        assert_eq!(with_at.ssh_target(), "qajus@heinz");
+    }
+
+    #[test]
+    fn errors_when_host_missing() {
+        let dir = env::temp_dir().join(format!("cargo-anywhere-nohost-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let res = load_config(Some(&dir), &CliOverrides::default());
+        assert!(res.is_err());
+        let _ = fs::remove_dir_all(&dir);
+    }
 }
