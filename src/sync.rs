@@ -5,13 +5,13 @@ use anyhow::{bail, Context, Result};
 
 use crate::config::ResolvedConfig;
 
-pub fn check_reachable(cfg: &ResolvedConfig) -> Result<()> {
+pub fn check_reachable(cfg: &ResolvedConfig) -> Result<String> {
     let target = cfg.ssh_target();
     let mut cmd = Command::new("ssh");
     cmd.args(["-o", "ConnectTimeout=3", "-o", "BatchMode=yes"]);
     cmd.args(cfg.ssh_identity_args());
     let out = cmd
-        .args([&target, "true"])
+        .args([&target, "uname -m"])
         .output()
         .context("running ssh connectivity check")?;
 
@@ -20,7 +20,7 @@ pub fn check_reachable(cfg: &ResolvedConfig) -> Result<()> {
         let reason = stderr.lines().last().unwrap_or("connection failed").trim();
         bail!("remote host '{target}' is unreachable ({reason})");
     }
-    Ok(())
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
 pub fn upload_sources(

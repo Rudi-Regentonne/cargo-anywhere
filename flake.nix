@@ -37,6 +37,7 @@
             cargo
             rustc
             clippy
+            rustfmt
             rust-analyzer
             rsync
           ];

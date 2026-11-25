@@ -19,6 +19,49 @@ pub fn resolve_target_cpu(setting: &str) -> Option<String> {
     detect_via_proc_cpuinfo().or_else(detect_via_gcc)
 }
 
+pub fn normalize_arch(arch: &str) -> &str {
+    match arch.trim() {
+        "amd64" => "x86_64",
+        "arm64" => "aarch64",
+        other => other,
+    }
+}
+
+pub fn client_target_triple() -> Option<String> {
+    let out = Command::new("rustc").arg("-vV").output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    parse_rustc_host(&stdout)
+}
+
+pub fn parse_rustc_host(stdout: &str) -> Option<String> {
+    for line in stdout.lines() {
+        if let Some(rest) = line.strip_prefix("host:") {
+            let triple = rest.trim();
+            if !triple.is_empty() {
+                return Some(triple.to_string());
+            }
+        }
+    }
+    None
+}
+
+pub fn target_rustflags_env_var(triple: &str) -> String {
+    let sanitized: String = triple
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_uppercase()
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    format!("CARGO_TARGET_{sanitized}_RUSTFLAGS")
+}
+
 fn detect_via_gcc() -> Option<String> {
     let out = Command::new("gcc")
         .args(["-march=native", "-Q", "--help=target"])
@@ -93,7 +136,8 @@ mod tests {
 
     #[test]
     fn parses_gcc_march_line() {
-        let sample = "  -march=                     \t\tznver4\n  -mtune=                     \t\tznver4\n";
+        let sample =
+            "  -march=                     \t\tznver4\n  -mtune=                     \t\tznver4\n";
         assert_eq!(parse_gcc_march(sample).as_deref(), Some("znver4"));
     }
 
@@ -109,5 +153,20 @@ mod tests {
         assert_eq!(parse_gcc_march("  -march= x86-64\n"), None);
         assert_eq!(parse_gcc_march("  -march= generic\n"), None);
         assert_eq!(parse_gcc_march("  -march= native\n"), None);
+    }
+
+    #[test]
+    fn parses_rustc_host_and_target_env_var() {
+        let sample = "rustc 1.84.0\nhost: x86_64-unknown-linux-gnu\nrelease: 1.84.0\n";
+        assert_eq!(
+            parse_rustc_host(sample).as_deref(),
+            Some("x86_64-unknown-linux-gnu")
+        );
+        assert_eq!(
+            target_rustflags_env_var("x86_64-unknown-linux-gnu"),
+            "CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS"
+        );
+        assert_eq!(normalize_arch("amd64"), "x86_64");
+        assert_eq!(normalize_arch("arm64"), "aarch64");
     }
 }

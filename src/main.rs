@@ -9,7 +9,7 @@ use std::env;
 use std::path::Path;
 use std::process::{Command, ExitCode};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 
 use cli::{Action, CopyMode};
 
@@ -54,19 +54,42 @@ fn run() -> Result<i32> {
             let layout = workspace::discover_layout(&cwd)?;
             let cfg = config::load_config(Some(&layout.workspace_root), &parsed.overrides)?;
 
-            let remote_sync_dir = format!("{}/{}", cfg.remote_dir.trim_end_matches('/'), layout.project_hash);
+            let remote_sync_dir = format!(
+                "{}/{}",
+                cfg.remote_dir.trim_end_matches('/'),
+                layout.project_hash
+            );
             let remote_work_dir = join_remote(&remote_sync_dir, &layout.rel_cwd);
             let remote_ws_dir = join_remote(&remote_sync_dir, &layout.rel_workspace);
 
-            let has_cargo_target = cargo_args
-                .iter()
-                .any(|a| a == "--target" || a.starts_with("--target="));
-            let target_cpu = if has_cargo_target && cfg.target_cpu.eq_ignore_ascii_case("auto") {
-                None
+            let mut cargo_args = cargo_args;
+            let remote_arch = sync::check_reachable(&cfg)?;
+
+            let explicit_target = extract_cargo_target(&cargo_args);
+            let auto_cross_target = if explicit_target.is_none()
+                && cpu::normalize_arch(&remote_arch) != cpu::normalize_arch(env::consts::ARCH)
+            {
+                cpu::client_target_triple()
             } else {
-                cpu::resolve_target_cpu(&cfg.target_cpu)
+                None
             };
-            sync::check_reachable(&cfg)?;
+
+            if let Some(ref triple) = auto_cross_target {
+                cargo_args.push("--target".to_string());
+                cargo_args.push(triple.clone());
+            }
+
+            let active_target = explicit_target.as_deref().or(auto_cross_target.as_deref());
+            let target_cpu =
+                if explicit_target.is_some() && cfg.target_cpu.eq_ignore_ascii_case("auto") {
+                    None
+                } else {
+                    cpu::resolve_target_cpu(&cfg.target_cpu)
+                };
+            let rustflags_var = active_target
+                .map(cpu::target_rustflags_env_var)
+                .unwrap_or_else(|| "RUSTFLAGS".to_string());
+
             sync::upload_sources(&cfg, &remote_sync_dir, &layout.sync_root)?;
 
             // Determine copy-back behavior
@@ -84,23 +107,30 @@ fn run() -> Result<i32> {
                     subcommand.clone()
                 }];
                 build_cmd.extend(cargo_args.iter().cloned());
-                if !build_cmd
-                    .iter()
-                    .any(|a| a.starts_with("--message-format"))
-                {
+                if !build_cmd.iter().any(|a| a.starts_with("--message-format")) {
                     build_cmd.push("--message-format=json-render-diagnostics".to_string());
                 }
 
-                let script = remote::build_remote_script(
-                    &remote_work_dir,
-                    &remote_ws_dir,
-                    &remote_sync_dir,
-                    cfg.env,
-                    target_cpu.as_deref(),
-                    &build_cmd,
-                );
+                let script = remote::build_remote_script(&remote::RemoteJob {
+                    work_dir: &remote_work_dir,
+                    ws_dir: &remote_ws_dir,
+                    sync_dir: &remote_sync_dir,
+                    env_mode: cfg.env,
+                    target_cpu: target_cpu.as_deref(),
+                    rustflags_var: &rustflags_var,
+                    check_target: active_target,
+                    cargo_cmd: &build_cmd,
+                });
                 let out = remote::run_capturing_executables(&cfg, &script)?;
                 if !out.success {
+                    if out.missing_target {
+                        if let Some(triple) = active_target {
+                            bail!(
+                                "target '{triple}' is not installed on remote host '{}' (install it with `rustup target add {triple}` or add it to your Nix/devenv toolchain)",
+                                cfg.host
+                            );
+                        }
+                    }
                     return Ok(out.exit_code);
                 }
 
@@ -140,14 +170,16 @@ fn run() -> Result<i32> {
                     full_cmd.extend(app_args);
                 }
 
-                let script = remote::build_remote_script(
-                    &remote_work_dir,
-                    &remote_ws_dir,
-                    &remote_sync_dir,
-                    cfg.env,
-                    target_cpu.as_deref(),
-                    &full_cmd,
-                );
+                let script = remote::build_remote_script(&remote::RemoteJob {
+                    work_dir: &remote_work_dir,
+                    ws_dir: &remote_ws_dir,
+                    sync_dir: &remote_sync_dir,
+                    env_mode: cfg.env,
+                    target_cpu: target_cpu.as_deref(),
+                    rustflags_var: &rustflags_var,
+                    check_target: active_target,
+                    cargo_cmd: &full_cmd,
+                });
                 let code = remote::run_streaming(&cfg, &script)?;
                 if code == 0 && copy_mode == CopyMode::Target {
                     sync::download_target_dir(&cfg, &remote_ws_dir, &layout.workspace_root)?;
@@ -156,6 +188,21 @@ fn run() -> Result<i32> {
             }
         }
     }
+}
+
+fn extract_cargo_target(args: &[String]) -> Option<String> {
+    let mut i = 0;
+    while i < args.len() {
+        let arg = &args[i];
+        if arg == "--target" {
+            return args.get(i + 1).cloned();
+        }
+        if let Some(val) = arg.strip_prefix("--target=") {
+            return Some(val.to_string());
+        }
+        i += 1;
+    }
+    None
 }
 
 fn join_remote(base: &str, rel: &Path) -> String {

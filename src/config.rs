@@ -82,8 +82,8 @@ impl PartialConfig {
         }
         let raw = fs::read_to_string(path)
             .with_context(|| format!("reading config file {}", path.display()))?;
-        let parsed: Self = toml::from_str(&raw)
-            .with_context(|| format!("parsing TOML in {}", path.display()))?;
+        let parsed: Self =
+            toml::from_str(&raw).with_context(|| format!("parsing TOML in {}", path.display()))?;
         Ok(Some(parsed))
     }
 
@@ -154,11 +154,19 @@ pub fn global_config_path() -> Option<PathBuf> {
 }
 
 pub fn load_config(workspace_root: Option<&Path>, cli: &CliOverrides) -> Result<ResolvedConfig> {
+    load_config_with_global(global_config_path().as_deref(), workspace_root, cli)
+}
+
+fn load_config_with_global(
+    global_path: Option<&Path>,
+    workspace_root: Option<&Path>,
+    cli: &CliOverrides,
+) -> Result<ResolvedConfig> {
     let mut cfg = ConfigBuilder::default();
 
     // 1. Global config
-    if let Some(global_path) = global_config_path() {
-        if let Some(partial) = PartialConfig::from_file(&global_path)? {
+    if let Some(global_path) = global_path {
+        if let Some(partial) = PartialConfig::from_file(global_path)? {
             partial.apply_into(&mut cfg)?;
         }
     }
@@ -327,7 +335,7 @@ mod tests {
         let dir = env::temp_dir().join(format!("cargo-anywhere-nohost-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
-        let res = load_config(Some(&dir), &CliOverrides::default());
+        let res = load_config_with_global(None, Some(&dir), &CliOverrides::default());
         assert!(res.is_err());
         let _ = fs::remove_dir_all(&dir);
     }
