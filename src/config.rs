@@ -2,7 +2,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 
 use crate::cli::{CliOverrides, CopyMode, EnvMode};
@@ -64,6 +64,7 @@ fn expand_tilde(path: &str) -> String {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct PartialConfig {
     host: Option<String>,
     user: Option<String>,
@@ -142,6 +143,14 @@ impl Default for ConfigBuilder {
     }
 }
 
+fn parse_bool_env(name: &str, value: &str) -> Result<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" => Ok(true),
+        "0" | "false" | "no" => Ok(false),
+        other => bail!("invalid {name} value '{other}' (expected: true/false, 1/0, yes/no)"),
+    }
+}
+
 pub fn global_config_path() -> Option<PathBuf> {
     if let Ok(xdg) = env::var("XDG_CONFIG_HOME") {
         if !xdg.is_empty() {
@@ -217,10 +226,8 @@ fn load_config_with_global(
         }
     }
     if let Ok(v) = env::var("CARGO_ANYWHERE_REMOTE_RUN") {
-        if matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes") {
-            cfg.remote_run = true;
-        } else if matches!(v.to_ascii_lowercase().as_str(), "0" | "false" | "no") {
-            cfg.remote_run = false;
+        if !v.is_empty() {
+            cfg.remote_run = parse_bool_env("CARGO_ANYWHERE_REMOTE_RUN", &v)?;
         }
     }
 
@@ -304,7 +311,7 @@ mod tests {
     #[test]
     fn ssh_target_and_identity_formatting() {
         let cfg = ResolvedConfig {
-            host: "heinz".into(),
+            host: "build-host".into(),
             user: Some("builder".into()),
             identity_file: Some("/tmp/my key".into()),
             remote_dir: "~/remote-builds".into(),
@@ -313,7 +320,7 @@ mod tests {
             copy: None,
             remote_run: false,
         };
-        assert_eq!(cfg.ssh_target(), "builder@heinz");
+        assert_eq!(cfg.ssh_target(), "builder@build-host");
         assert_eq!(
             cfg.ssh_identity_args(),
             vec!["-i", "/tmp/my key", "-o", "IdentitiesOnly=yes"]
@@ -324,10 +331,10 @@ mod tests {
         );
 
         let with_at = ResolvedConfig {
-            host: "qajus@heinz".into(),
+            host: "alice@build-host".into(),
             ..cfg
         };
-        assert_eq!(with_at.ssh_target(), "qajus@heinz");
+        assert_eq!(with_at.ssh_target(), "alice@build-host");
     }
 
     #[test]
@@ -338,5 +345,31 @@ mod tests {
         let res = load_config_with_global(None, Some(&dir), &CliOverrides::default());
         assert!(res.is_err());
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn errors_on_unknown_config_field() {
+        let dir = env::temp_dir().join(format!("cargo-anywhere-badfield-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(
+            dir.join(".cargo-anywhere.toml"),
+            "host = \"build-host\"\nremote-dir = \"~/builds\"\n",
+        )
+        .unwrap();
+
+        let res = load_config_with_global(None, Some(&dir), &CliOverrides::default());
+        assert!(res.is_err());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn parses_bool_env_values() {
+        assert_eq!(parse_bool_env("CARGO_ANYWHERE_REMOTE_RUN", "true").unwrap(), true);
+        assert_eq!(parse_bool_env("CARGO_ANYWHERE_REMOTE_RUN", "1").unwrap(), true);
+        assert_eq!(parse_bool_env("CARGO_ANYWHERE_REMOTE_RUN", "YES").unwrap(), true);
+        assert_eq!(parse_bool_env("CARGO_ANYWHERE_REMOTE_RUN", "false").unwrap(), false);
+        assert_eq!(parse_bool_env("CARGO_ANYWHERE_REMOTE_RUN", "0").unwrap(), false);
+        assert!(parse_bool_env("CARGO_ANYWHERE_REMOTE_RUN", "maybe").is_err());
     }
 }

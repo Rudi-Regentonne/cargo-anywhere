@@ -89,6 +89,10 @@ fn parse_gcc_march(stdout: &str) -> Option<String> {
 
 fn detect_via_proc_cpuinfo() -> Option<String> {
     let raw = fs::read_to_string("/proc/cpuinfo").ok()?;
+    parse_proc_cpuinfo(&raw)
+}
+
+fn parse_proc_cpuinfo(raw: &str) -> Option<String> {
     let mut vendor = None;
     let mut family = None;
     let mut model = None;
@@ -168,5 +172,22 @@ mod tests {
         );
         assert_eq!(normalize_arch("amd64"), "x86_64");
         assert_eq!(normalize_arch("arm64"), "aarch64");
+    }
+
+    #[test]
+    fn detects_amd_zen_generations_from_cpuinfo() {
+        let zen5 = "vendor_id\t: AuthenticAMD\ncpu family\t: 26\nmodel\t\t: 1\n";
+        let zen4 = "vendor_id\t: AuthenticAMD\ncpu family\t: 25\nmodel\t\t: 97\n";
+        let zen3 = "vendor_id\t: AuthenticAMD\ncpu family\t: 25\nmodel\t\t: 33\n";
+        let zen2 = "vendor_id\t: AuthenticAMD\ncpu family\t: 23\nmodel\t\t: 113\n";
+        let zen1 = "vendor_id\t: AuthenticAMD\ncpu family\t: 23\nmodel\t\t: 1\n";
+        let unknown = "vendor_id\t: GenuineIntel\ncpu family\t: 6\nmodel\t\t: 154\n";
+
+        assert_eq!(parse_proc_cpuinfo(zen5).as_deref(), Some("znver5"));
+        assert_eq!(parse_proc_cpuinfo(zen4).as_deref(), Some("znver4"));
+        assert_eq!(parse_proc_cpuinfo(zen3).as_deref(), Some("znver3"));
+        assert_eq!(parse_proc_cpuinfo(zen2).as_deref(), Some("znver2"));
+        assert_eq!(parse_proc_cpuinfo(zen1).as_deref(), Some("znver1"));
+        assert_eq!(parse_proc_cpuinfo(unknown), None);
     }
 }

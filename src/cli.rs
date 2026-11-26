@@ -54,6 +54,7 @@ pub struct CliOverrides {
 pub enum Action {
     Help,
     Version,
+    Status,
     Gc,
     Cargo {
         subcommand: String,
@@ -78,6 +79,7 @@ Run Cargo commands on a remote host with automatic client CPU optimization.
 
 USAGE:
     cargo anywhere [OPTIONS] <CARGO_SUBCOMMAND> [CARGO_ARGS...] [-- APP_ARGS...]
+    cargo anywhere [OPTIONS] status
     cargo anywhere [OPTIONS] gc
 
 OPTIONS:
@@ -195,6 +197,9 @@ where
                 i += 1;
             }
             _ => {
+                if positional.is_empty() && arg.starts_with('-') {
+                    bail!("unknown option '{arg}' (run `cargo anywhere --help` for usage)");
+                }
                 positional.push(arg.clone());
                 i += 1;
             }
@@ -209,6 +214,12 @@ where
     }
 
     let subcommand = positional.remove(0);
+    if subcommand == "status" {
+        return Ok(ParsedCli {
+            overrides,
+            action: Action::Status,
+        });
+    }
     if subcommand == "gc" || subcommand == "clean" {
         return Ok(ParsedCli {
             overrides,
@@ -236,6 +247,9 @@ fn take_opt_value(raw: &[String], idx: &mut usize, flag: &str) -> Result<Option<
         return Ok(Some(next.clone()));
     }
     if let Some(rest) = cur.strip_prefix(&format!("{flag}=")) {
+        if rest.is_empty() {
+            bail!("missing value for {flag}");
+        }
         *idx += 1;
         return Ok(Some(rest.to_string()));
     }
@@ -255,7 +269,7 @@ mod tests {
         let parsed = parse_args(s(&[
             "anywhere",
             "--host",
-            "heinz",
+            "build-host",
             "run",
             "--release",
             "--features",
@@ -266,7 +280,7 @@ mod tests {
         ]))
         .unwrap();
 
-        assert_eq!(parsed.overrides.host.as_deref(), Some("heinz"));
+        assert_eq!(parsed.overrides.host.as_deref(), Some("build-host"));
         assert_eq!(
             parsed.action,
             Action::Cargo {
@@ -327,6 +341,7 @@ mod tests {
     #[test]
     fn parses_clean_alias_and_version() {
         assert_eq!(parse_args(s(&["clean"])).unwrap().action, Action::Gc);
+        assert_eq!(parse_args(s(&["status"])).unwrap().action, Action::Status);
         assert_eq!(parse_args(s(&["-V"])).unwrap().action, Action::Version);
         assert_eq!(parse_args(s(&[])).unwrap().action, Action::Help);
     }
@@ -334,6 +349,24 @@ mod tests {
     #[test]
     fn errors_on_missing_flag_value() {
         assert!(parse_args(s(&["--host"])).is_err());
+        assert!(parse_args(s(&["--host="])).is_err());
         assert!(parse_args(s(&["--env", "invalid"])).is_err());
+    }
+
+    #[test]
+    fn errors_on_unknown_flag_before_subcommand() {
+        let err = parse_args(s(&["--unknown-flag", "build"])).unwrap_err();
+        assert!(err.to_string().contains("unknown option '--unknown-flag'"));
+
+        // Flags after the subcommand are forwarded to cargo as usual.
+        let ok = parse_args(s(&["build", "--all-targets"])).unwrap();
+        assert_eq!(
+            ok.action,
+            Action::Cargo {
+                subcommand: "build".into(),
+                cargo_args: s(&["--all-targets"]),
+                app_args: vec![],
+            }
+        );
     }
 }

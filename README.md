@@ -4,8 +4,8 @@ Offload Cargo builds to a fast remote machine over SSH and `rsync`, with automat
 
 ## Features
 
-- **Workspace & `../` path dependencies**: Uses `cargo metadata` to find the common ancestor of your workspace and local `path` dependencies, preserving relative paths on the remote host.
-- **Automatic client CPU optimization**: Detects your local CPU (e.g., `znver4`) and passes `-C target-cpu=<cpu>` via `RUSTFLAGS` to the remote build host (automatically skipped when `--target` is passed).
+- **Workspace & `../` path dependencies**: Uses `cargo metadata` (plus transitive `Cargo.toml` `path` inspection) to find the common ancestor of your workspace and local `path` dependencies, preserving relative paths on the remote host.
+- **Automatic client CPU optimization & cross-compilation**: Detects your local CPU (e.g., `znver4`) and passes `-C target-cpu=<cpu>` via `RUSTFLAGS` (or `CARGO_TARGET_<TRIPLE>_RUSTFLAGS` when cross-compiling) to the remote build host. Automatically adds `--target <local-triple>` when the remote host architecture differs from your client, and skips automatic `target-cpu` when an explicit `--target` is passed.
 - **Smart `run` & binary-only copy-back**: `cargo anywhere run` builds remotely, copies back **only** the compiled executable + `Cargo.lock` (never gigabytes of `target/`), and executes locally with your `-- <app_args>`.
 - **Opt-in Nix / `devenv` support**: Plain `cargo` by default for standard `rustup` users; set `env = "auto" | "devenv" | "nix"` to wrap remote commands in `devenv shell --` or `nix develop -c`.
 - **Isolated build user & SSH key**: Optional `user` and `identity_file` (`--user`, `--identity-file`) to separate build connections from your normal SSH user/key.
@@ -57,7 +57,10 @@ cargo anywhere --copy-target build
 # Use a separate build user and SSH key
 cargo anywhere --user builder --identity-file ~/.ssh/id_builder build
 
-# Clean remote build cache
+# Check SSH connectivity, remote tools, and resolved configuration
+cargo anywhere status
+
+# Clean remote build cache (alias: `clean`)
 cargo anywhere gc
 ```
 
@@ -69,12 +72,14 @@ Precedence (highest to lowest):
 2. **Environment variables**: `CARGO_ANYWHERE_HOST`, `CARGO_ANYWHERE_USER`, `CARGO_ANYWHERE_IDENTITY_FILE`, `CARGO_ANYWHERE_REMOTE_DIR`, `CARGO_ANYWHERE_ENV`, `CARGO_ANYWHERE_TARGET_CPU`, `CARGO_ANYWHERE_COPY`, `CARGO_ANYWHERE_REMOTE_RUN`
 3. **Workspace local override**: `<workspace>/.cargo-anywhere.local.toml`
 4. **Workspace config**: `<workspace>/.cargo-anywhere.toml`
-5. **Global config**: `~/.config/cargo-anywhere/config.toml`
+5. **Global config**: `~/.config/cargo-anywhere/config.toml` (or `$XDG_CONFIG_HOME/cargo-anywhere/config.toml`)
+
+Unknown keys in config files are rejected, and `CARGO_ANYWHERE_REMOTE_RUN` accepts `true`/`false`, `1`/`0`, or `yes`/`no`.
 
 Example `~/.config/cargo-anywhere/config.toml`:
 
 ```toml
-host = "heinz"
+host = "build-host"
 # user = "builder"
 # identity_file = "~/.ssh/id_builder"
 remote_dir = "~/remote-builds"
