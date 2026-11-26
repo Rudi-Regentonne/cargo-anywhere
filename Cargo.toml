@@ -12,6 +12,7 @@ categories = ["command-line-utilities", "development-tools::cargo-plugins"]
 exclude = [
     ".devenv/",
     ".direnv/",
+    ".envrc",
     ".github/",
     ".pre-commit-config.yaml",
     "devenv.*",
