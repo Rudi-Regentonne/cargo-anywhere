@@ -28,6 +28,13 @@
           version = "0.1.0";
           src = self;
           cargoLock.lockFile = ./Cargo.lock;
+
+          meta = with pkgs.lib; {
+            description = "Nix/devenv-aware remote Cargo runner with automatic client CPU optimization";
+            homepage = "https://github.com/Rudi-Regentonne/cargo-anywhere";
+            license = licenses.mit;
+            mainProgram = "cargo-anywhere";
+          };
         };
       });
 
