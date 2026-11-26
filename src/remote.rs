@@ -311,7 +311,10 @@ mod tests {
     #[test]
     fn quotes_remote_paths_with_spaces_and_tilde() {
         assert_eq!(quote_remote_path("~"), "\"$HOME\"");
-        assert_eq!(quote_remote_path("~/remote-builds"), "\"$HOME\"/remote-builds");
+        assert_eq!(
+            quote_remote_path("~/remote-builds"),
+            "\"$HOME\"/remote-builds"
+        );
         assert_eq!(
             quote_remote_path("~/my builds/app"),
             "\"$HOME\"/'my builds/app'"

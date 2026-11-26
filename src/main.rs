@@ -96,10 +96,8 @@ fn run_status(overrides: &CliOverrides) -> Result<i32> {
         EnvMode::Devenv => status.has_devenv,
         EnvMode::Nix => status.has_nix,
     };
-    let all_ok = status.has_rsync
-        && status.cargo_version.is_some()
-        && status.remote_dir_writable
-        && env_ok;
+    let all_ok =
+        status.has_rsync && status.cargo_version.is_some() && status.remote_dir_writable && env_ok;
     Ok(if all_ok { 0 } else { 1 })
 }
 
@@ -175,8 +173,8 @@ fn resolve_target_settings(
     }
 
     let active_target = explicit_target.or(auto_cross_target);
-    let skip_auto_cpu = cfg.target_cpu.eq_ignore_ascii_case("auto")
-        && (had_explicit_target || runs_on_remote);
+    let skip_auto_cpu =
+        cfg.target_cpu.eq_ignore_ascii_case("auto") && (had_explicit_target || runs_on_remote);
     let target_cpu = if skip_auto_cpu {
         None
     } else {
@@ -231,14 +229,7 @@ fn run_cargo(
         )
     } else {
         run_streaming_cargo(
-            &cfg,
-            &layout,
-            &paths,
-            &target,
-            subcommand,
-            cargo_args,
-            app_args,
-            copy_mode,
+            &cfg, &layout, &paths, &target, subcommand, cargo_args, app_args, copy_mode,
         )
     }
 }
@@ -386,7 +377,12 @@ mod tests {
     #[test]
     fn extracts_cargo_target_formats() {
         assert_eq!(
-            extract_cargo_target(&["--release".into(), "--target".into(), "aarch64-unknown-linux-gnu".into()]).as_deref(),
+            extract_cargo_target(&[
+                "--release".into(),
+                "--target".into(),
+                "aarch64-unknown-linux-gnu".into()
+            ])
+            .as_deref(),
             Some("aarch64-unknown-linux-gnu")
         );
         assert_eq!(
@@ -436,7 +432,8 @@ mod tests {
 
         // Even if remote arch differs, remote execution should not inject client --target or auto target-cpu.
         let mut args = vec!["--release".to_string()];
-        let remote_target = resolve_target_settings(&cfg, "totally-different-arch", &mut args, true);
+        let remote_target =
+            resolve_target_settings(&cfg, "totally-different-arch", &mut args, true);
         assert_eq!(remote_target.active_target, None);
         assert_eq!(remote_target.target_cpu, None);
         assert_eq!(args, vec!["--release"]);

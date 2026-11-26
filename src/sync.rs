@@ -111,7 +111,10 @@ pub fn download_target_dir(
     local_workspace_dir: &Path,
 ) -> Result<()> {
     let target = cfg.ssh_target();
-    let src = format!("{target}:{}/target/", rsync_remote_path(remote_workspace_dir));
+    let src = format!(
+        "{target}:{}/target/",
+        rsync_remote_path(remote_workspace_dir)
+    );
     let dst = format!("{}/target/", local_workspace_dir.display());
     std::fs::create_dir_all(local_workspace_dir.join("target"))?;
 
@@ -140,10 +143,7 @@ mod tests {
             rsync_remote_path("~/remote-builds/abc"),
             "remote-builds/abc"
         );
-        assert_eq!(
-            rsync_remote_path("~/my builds/abc"),
-            "my builds/abc"
-        );
+        assert_eq!(rsync_remote_path("~/my builds/abc"), "my builds/abc");
         assert_eq!(
             rsync_remote_path("/tmp/my builds/abc"),
             "/tmp/my builds/abc"

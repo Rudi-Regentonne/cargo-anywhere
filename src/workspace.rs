@@ -225,10 +225,8 @@ mod tests {
 
     #[test]
     fn discover_layout_includes_sibling_and_transitive_path_deps() {
-        let root = std::env::temp_dir().join(format!(
-            "cargo-anywhere-ws-test-{}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("cargo-anywhere-ws-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
 
         let app_dir = root.join("app");

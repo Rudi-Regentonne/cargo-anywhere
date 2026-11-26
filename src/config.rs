@@ -365,11 +365,11 @@ mod tests {
 
     #[test]
     fn parses_bool_env_values() {
-        assert_eq!(parse_bool_env("CARGO_ANYWHERE_REMOTE_RUN", "true").unwrap(), true);
-        assert_eq!(parse_bool_env("CARGO_ANYWHERE_REMOTE_RUN", "1").unwrap(), true);
-        assert_eq!(parse_bool_env("CARGO_ANYWHERE_REMOTE_RUN", "YES").unwrap(), true);
-        assert_eq!(parse_bool_env("CARGO_ANYWHERE_REMOTE_RUN", "false").unwrap(), false);
-        assert_eq!(parse_bool_env("CARGO_ANYWHERE_REMOTE_RUN", "0").unwrap(), false);
+        assert!(parse_bool_env("CARGO_ANYWHERE_REMOTE_RUN", "true").unwrap());
+        assert!(parse_bool_env("CARGO_ANYWHERE_REMOTE_RUN", "1").unwrap());
+        assert!(parse_bool_env("CARGO_ANYWHERE_REMOTE_RUN", "YES").unwrap());
+        assert!(!parse_bool_env("CARGO_ANYWHERE_REMOTE_RUN", "false").unwrap());
+        assert!(!parse_bool_env("CARGO_ANYWHERE_REMOTE_RUN", "0").unwrap());
         assert!(parse_bool_env("CARGO_ANYWHERE_REMOTE_RUN", "maybe").is_err());
     }
 }
